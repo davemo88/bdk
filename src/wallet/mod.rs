@@ -3473,12 +3473,10 @@ mod test {
         println!("root fingerprint: {}", root_fingerprint);
         println!("account fingerprint: {}", account_fingerprint);
         let external_descriptor = format!("wpkh({}/0/*)", descriptor_key);
-        let internal_descriptor = format!("wpkh({}/1/*)", descriptor_key);
         println!("external descriptor {}", external_descriptor);
-        println!("internal descriptor {}", internal_descriptor);
         let wallet = Wallet::new_offline(
             &external_descriptor,
-            Some(&internal_descriptor),
+            None,
             Network::Regtest,
             MemoryDatabase::new(),
         ).unwrap();
