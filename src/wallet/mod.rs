@@ -3453,4 +3453,57 @@ mod test {
             "should finalized input it signed"
         )
     }
+
+    #[test]
+    fn test_mytest() {
+        use bitcoin::util::bip32::ExtendedPrivKey;
+        use bitcoin::util::bip32::DerivationPath;
+        use miniscript::descriptor::DescriptorSecretKey;
+        use hex;
+
+        let seed = "2856f94c8d4c8cdcd111fc8b4321e96959867c148c431f2fbbf767e334c5329019013283034505818f657d3f8eded8f620a9761f9b60cb23422e56bd6d979330";
+        let root_key = ExtendedPrivKey::new_master(Network::Regtest, &hex::decode(&seed).unwrap()).unwrap();
+        let secp = Secp256k1::new();
+        let root_fingerprint = root_key.fingerprint(&secp);
+        let account_path = "84h/1h/0h";
+        let account_key = root_key.derive_priv(&secp, &DerivationPath::from_str(&format!("m/{}", account_path)).unwrap()).unwrap();
+        let account_fingerprint = account_key.fingerprint(&secp);
+        let descriptor_key = format!("[{}/{}]{}", root_fingerprint, account_path, account_key);
+//        let descriptor_key = format!("{}", account_key);
+        println!("root fingerprint: {}", root_fingerprint);
+        println!("account fingerprint: {}", account_fingerprint);
+        let external_descriptor = format!("wpkh({}/0/*)", descriptor_key);
+        let internal_descriptor = format!("wpkh({}/1/*)", descriptor_key);
+        println!("external descriptor {}", external_descriptor);
+        println!("internal descriptor {}", internal_descriptor);
+        let wallet = Wallet::new_offline(
+            &external_descriptor,
+            Some(&internal_descriptor),
+            Network::Regtest,
+            MemoryDatabase::new(),
+        ).unwrap();
+        let external_descriptor = wallet.get_descriptor_for_keychain(KeychainKind::External);
+        let derived_descriptor = external_descriptor.as_derived(0, &secp);
+        let keypaths = derived_descriptor.get_hd_keypaths(&secp).unwrap();
+        println!("descriptor m/0/0 hd keypaths: {:?}", keypaths);
+        for signer in wallet.signers.signers().iter() {
+            match signer.descriptor_secret_key().unwrap() {
+                DescriptorSecretKey::XPrv(descriptor_xkey) => {
+                    println!("descriptor xkey: {:?}", descriptor_xkey);
+                    let (pk, fingerprint, ref path) = keypaths.iter().map(
+                        |(pk, &(fingerprint, ref path))| {
+                            (pk.clone(), fingerprint.clone(), path.clone())
+                        }
+                    ).next().unwrap();
+println!("matching fingerprint: {:?} path: {:?}", fingerprint, path);
+                    if descriptor_xkey.matches(&(fingerprint, path.clone()), &secp).is_some() {
+                        let descriptor_xkey_fingerprint = descriptor_xkey.xkey.fingerprint(&secp);
+                        println!("descriptor xkey fingerprint: {:?}", descriptor_xkey_fingerprint);
+                        assert_eq!(pk, descriptor_xkey.xkey.derive_priv(&secp, &path).unwrap().private_key.public_key(&secp));
+                    }
+                },
+                DescriptorSecretKey::SinglePriv(_) => (),
+            }
+        }
+    }
 }
