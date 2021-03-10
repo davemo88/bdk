@@ -3484,15 +3484,15 @@ mod test {
         let derived_descriptor = external_descriptor.as_derived(0, &secp);
         let keypaths = derived_descriptor.get_hd_keypaths(&secp).unwrap();
         println!("external keychain key 0 keypaths: {:?}", keypaths);
+        let (pk, fingerprint, ref path) = keypaths.iter().map(
+            |(pk, &(fingerprint, ref path))| {
+                (pk.clone(), fingerprint.clone(), path.clone())
+            }
+        ).next().unwrap();
         for signer in wallet.signers.signers().iter() {
             match signer.descriptor_secret_key().unwrap() {
                 DescriptorSecretKey::XPrv(descriptor_xkey) => {
                     println!("descriptor xkey: {:?}", descriptor_xkey);
-                    let (pk, fingerprint, ref path) = keypaths.iter().map(
-                        |(pk, &(fingerprint, ref path))| {
-                            (pk.clone(), fingerprint.clone(), path.clone())
-                        }
-                    ).next().unwrap();
                     if descriptor_xkey.matches(&(fingerprint, path.clone()), &secp).is_some() {
                         println!("matching fingerprint: {:?} path: {:?}", fingerprint, path);
                         let descriptor_xkey_fingerprint = descriptor_xkey.xkey.fingerprint(&secp);
