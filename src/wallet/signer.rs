@@ -235,8 +235,6 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
             None => return Ok(()),
         };
 
-        println!("{:?}", self.origin);
-
         let derived_key = match self.origin.clone() {
             Some((_fingerprint, path)) => { 
                 let split_origin_path: Vec<&ChildNumber> = path.into_iter().collect(); 
