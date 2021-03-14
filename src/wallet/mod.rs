@@ -772,13 +772,7 @@ where
             .iter()
             .chain(self.change_signers.signers().iter())
         {
-            if signer.sign_whole_tx() {
-                signer.sign(&mut psbt, None, &self.secp)?;
-            } else {
-                for index in 0..psbt.inputs.len() {
-                    signer.sign(&mut psbt, Some(index), &self.secp)?;
-                }
-            }
+            signer.sign(&mut psbt, None, &self.secp)?;
         }
 
         // attempt to finalize
@@ -1198,9 +1192,6 @@ where
             }
         }
 
-        // probably redundant but it doesn't hurt...
-        self.add_input_hd_keypaths(&mut psbt)?;
-
         // add metadata for the outputs
         for (psbt_output, tx_output) in psbt
             .outputs
@@ -1227,11 +1218,9 @@ where
     }
 
     fn add_input_hd_keypaths(&self, psbt: &mut PSBT) -> Result<(), Error> {
-        let mut input_utxos = Vec::with_capacity(psbt.inputs.len());
-        for n in 0..psbt.inputs.len() {
-            input_utxos.push(psbt.get_utxo_for(n).clone());
-        }
-
+        let input_utxos = (0..psbt.inputs.len())
+            .map(|i| psbt.get_utxo_for(i))
+            .collect::<Vec<Option<TxOut>>>();
         // try to add hd_keypaths if we've already seen the output
         for (psbt_input, out) in psbt.inputs.iter_mut().zip(input_utxos.iter()) {
             if let Some(out) = out {

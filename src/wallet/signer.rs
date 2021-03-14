@@ -63,10 +63,6 @@
 //!     fn id(&self, _secp: &Secp256k1<All>) -> SignerId {
 //!         self.device.get_id()
 //!     }
-//!
-//!     fn sign_whole_tx(&self) -> bool {
-//!         false
-//!     }
 //! }
 //!
 //! let custom_signer = CustomSigner::connect();
@@ -165,7 +161,7 @@ pub trait Signer: fmt::Debug + Send + Sync {
     /// Sign a PSBT
     ///
     /// The `input_index` argument is only provided if the wallet doesn't declare to sign the whole
-    /// transaction in one go (see [`Signer::sign_whole_tx`]). Otherwise its value is `None` and
+    /// transaction in one go. Otherwise its value is `None` and
     /// can be ignored.
     fn sign(
         &self,
@@ -173,10 +169,6 @@ pub trait Signer: fmt::Debug + Send + Sync {
         input_index: Option<usize>,
         secp: &SecpCtx,
     ) -> Result<(), SignerError>;
-
-    /// Return whether or not the signer signs the whole transaction in one go instead of every
-    /// input individually
-    fn sign_whole_tx(&self) -> bool;
 
     /// Return the [`SignerId`] for this signer
     ///
@@ -201,47 +193,46 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
         input_index: Option<usize>,
         secp: &SecpCtx,
     ) -> Result<(), SignerError> {
-        let input_index = input_index.unwrap();
-        if input_index >= psbt.inputs.len() {
-            return Err(SignerError::InputIndexOutOfRange);
-        }
+        if let Some(i) = input_index {
+            if let Some(input) = psbt.inputs.get(i) {
+                if let Some((pk, &(fingerprint, ref full_path))) =
+                    input.bip32_derivation.iter().next()
+                {
+                    if self
+                        .matches(&(fingerprint, full_path.clone()), &secp)
+                        .is_some()
+                    {
+                        let derived_key = match self.origin.clone() {
+                            Some((_fingerprint, origin_path)) => {
+                                let deriv_path = DerivationPath::from(
+                                    &full_path.into_iter().cloned().collect::<Vec<ChildNumber>>()
+                                        [origin_path.len()..],
+                                );
+                                self.xkey.derive_priv(&secp, &deriv_path).unwrap()
+                            }
+                            None => self.xkey.derive_priv(&secp, &full_path).unwrap(),
+                        };
 
-        let (public_key, full_path) = match psbt.inputs[input_index]
-            .bip32_derivation
-            .iter()
-            .filter_map(|(pk, &(fingerprint, ref path))| {
-                if self.matches(&(fingerprint, path.clone()), &secp).is_some() {
-                    Some((pk, path))
+                        if &derived_key.private_key.public_key(&secp) != pk {
+                            Err(SignerError::InvalidKey)
+                        } else {
+                            derived_key.private_key.sign(psbt, Some(i), secp)
+                        }
+                    } else {
+                        Err(SignerError::MissingHDKeypath)
+                    }
                 } else {
-                    None
+                    Err(SignerError::MissingHDKeypath)
                 }
-            })
-            .next()
-        {
-            Some((pk, full_path)) => (pk, full_path.clone()),
-            None => return Ok(()),
-        };
-
-        let derived_key = match self.origin.clone() {
-            Some((_fingerprint, origin_path)) => {
-                let deriv_path = DerivationPath::from(
-                    &full_path.into_iter().cloned().collect::<Vec<ChildNumber>>()
-                        [origin_path.len()..],
-                );
-                self.xkey.derive_priv(&secp, &deriv_path).unwrap()
+            } else {
+                Err(SignerError::InputIndexOutOfRange)
             }
-            None => self.xkey.derive_priv(&secp, &full_path).unwrap(),
-        };
-
-        if &derived_key.private_key.public_key(&secp) != public_key {
-            Err(SignerError::InvalidKey)
         } else {
-            derived_key.private_key.sign(psbt, Some(input_index), secp)
+            for i in 0..psbt.inputs.len() {
+                self.sign(psbt, Some(i), &secp)?;
+            }
+            Ok(())
         }
-    }
-
-    fn sign_whole_tx(&self) -> bool {
-        false
     }
 
     fn id(&self, secp: &SecpCtx) -> SignerId {
@@ -260,43 +251,42 @@ impl Signer for PrivateKey {
         input_index: Option<usize>,
         secp: &SecpCtx,
     ) -> Result<(), SignerError> {
-        let input_index = input_index.unwrap();
-        if input_index >= psbt.inputs.len() {
-            return Err(SignerError::InputIndexOutOfRange);
+        if let Some(i) = input_index {
+            if let Some(input) = psbt.inputs.get(i) {
+                let pubkey = self.public_key(&secp);
+                if input.partial_sigs.contains_key(&pubkey) {
+                    return Ok(());
+                }
+                // FIXME: use the presence of `witness_utxo` as an indication that we should make a bip143
+                // sig. Does this make sense? Should we add an extra argument to explicitly swith between
+                // these? The original idea was to declare sign() as sign<Ctx: ScriptContex>() and use Ctx,
+                // but that violates the rules for trait-objects, so we can't do it.
+                let (hash, sighash) = match input.witness_utxo {
+                    Some(_) => Segwitv0::sighash(&psbt.clone(), i)?,
+                    None => Legacy::sighash(&psbt.clone(), i)?,
+                };
+
+                let signature = secp.sign(
+                    &Message::from_slice(&hash.into_inner()[..]).unwrap(),
+                    &self.key,
+                );
+
+                let mut final_signature = Vec::with_capacity(75);
+                final_signature.extend_from_slice(&signature.serialize_der());
+                final_signature.push(sighash.as_u32() as u8);
+
+                psbt.inputs[i].partial_sigs.insert(pubkey, final_signature);
+
+                Ok(())
+            } else {
+                Err(SignerError::InputIndexOutOfRange)
+            }
+        } else {
+            for i in 0..psbt.inputs.len() {
+                self.sign(psbt, Some(i), &secp)?;
+            }
+            Ok(())
         }
-
-        let pubkey = self.public_key(&secp);
-        if psbt.inputs[input_index].partial_sigs.contains_key(&pubkey) {
-            return Ok(());
-        }
-
-        // FIXME: use the presence of `witness_utxo` as an indication that we should make a bip143
-        // sig. Does this make sense? Should we add an extra argument to explicitly swith between
-        // these? The original idea was to declare sign() as sign<Ctx: ScriptContex>() and use Ctx,
-        // but that violates the rules for trait-objects, so we can't do it.
-        let (hash, sighash) = match psbt.inputs[input_index].witness_utxo {
-            Some(_) => Segwitv0::sighash(psbt, input_index)?,
-            None => Legacy::sighash(psbt, input_index)?,
-        };
-
-        let signature = secp.sign(
-            &Message::from_slice(&hash.into_inner()[..]).unwrap(),
-            &self.key,
-        );
-
-        let mut final_signature = Vec::with_capacity(75);
-        final_signature.extend_from_slice(&signature.serialize_der());
-        final_signature.push(sighash.as_u32() as u8);
-
-        psbt.inputs[input_index]
-            .partial_sigs
-            .insert(pubkey, final_signature);
-
-        Ok(())
-    }
-
-    fn sign_whole_tx(&self) -> bool {
-        false
     }
 
     fn id(&self, secp: &SecpCtx) -> SignerId {
@@ -659,10 +649,6 @@ mod signers_container_tests {
 
         fn id(&self, _secp: &SecpCtx) -> SignerId {
             SignerId::Dummy(self.number)
-        }
-
-        fn sign_whole_tx(&self) -> bool {
-            true
         }
     }
 
