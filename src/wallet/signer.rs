@@ -143,6 +143,8 @@ pub enum SignerError {
     MissingWitnessScript,
     /// The fingerprint and derivation path are missing from the psbt input
     MissingHDKeypath,
+    /// The derivation path in the input can't be derived
+    InvalidHDKeypath,
 }
 
 impl fmt::Display for SignerError {
@@ -193,47 +195,87 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
         input_index: Option<usize>,
         secp: &SecpCtx,
     ) -> Result<(), SignerError> {
-        if let Some(i) = input_index {
-            if let Some(input) = psbt.inputs.get(i) {
-                if let Some((pk, &(fingerprint, ref full_path))) =
-                    input.bip32_derivation.iter().next()
-                {
-                    if self
-                        .matches(&(fingerprint, full_path.clone()), &secp)
-                        .is_some()
-                    {
-                        let derived_key = match self.origin.clone() {
-                            Some((_fingerprint, origin_path)) => {
-                                let deriv_path = DerivationPath::from(
-                                    &full_path.into_iter().cloned().collect::<Vec<ChildNumber>>()
-                                        [origin_path.len()..],
-                                );
-                                self.xkey.derive_priv(&secp, &deriv_path).unwrap()
-                            }
-                            None => self.xkey.derive_priv(&secp, &full_path).unwrap(),
-                        };
-
-                        if &derived_key.private_key.public_key(&secp) != pk {
-                            Err(SignerError::InvalidKey)
-                        } else {
-                            derived_key.private_key.sign(psbt, Some(i), secp)
-                        }
-                    } else {
-                        Err(SignerError::MissingHDKeypath)
-                    }
-                } else {
-                    Err(SignerError::MissingHDKeypath)
+        let i = match input_index {
+            Some(i) => i,
+            None => {
+                for i in 0..psbt.inputs.len() {
+                    self.sign(psbt, Some(i), &secp)?;
                 }
-            } else {
-                Err(SignerError::InputIndexOutOfRange)
+                return Ok(())
+            }
+        };
+        let input = match psbt.inputs.get(i) {
+            Some(input) => input,
+            None => return Err(SignerError::InputIndexOutOfRange),
+        };
+        let (pk, (fingerprint, full_path)) = match input.bip32_derivation.iter().next() {
+            Some((pk, &(fingerprint, ref full_path))) => (pk, (fingerprint, full_path)),
+            None => return Err(SignerError::MissingHDKeypath),
+        };
+        let derived_key = if self
+            .matches(&(fingerprint, full_path.clone().clone()), &secp)
+            .is_some()
+        {
+            match self.origin.clone() {
+                Some((_fingerprint, origin_path)) => {
+                    let deriv_path = DerivationPath::from(
+                        &full_path.into_iter().cloned().collect::<Vec<ChildNumber>>()
+                            [origin_path.len()..],
+                    );
+                    self.xkey.derive_priv(&secp, &deriv_path).unwrap()
+                }
+                None => self.xkey.derive_priv(&secp, &full_path).unwrap(),
             }
         } else {
-            for i in 0..psbt.inputs.len() {
-                self.sign(psbt, Some(i), &secp)?;
-            }
-            Ok(())
+            return Err(SignerError::InvalidHDKeypath)
+        };
+
+        if &derived_key.private_key.public_key(&secp) == pk {
+            derived_key.private_key.sign(psbt, Some(i), secp)
+        } else {
+            Err(SignerError::InvalidKey)
         }
     }
+//        if let Some(i) = input_index {
+//            if let Some(input) = psbt.inputs.get(i) {
+//                if let Some((pk, &(fingerprint, ref full_path))) =
+//                    input.bip32_derivation.iter().next()
+//                {
+//                    if self
+//                        .matches(&(fingerprint, full_path.clone()), &secp)
+//                        .is_some()
+//                    {
+//                        let derived_key = match self.origin.clone() {
+//                            Some((_fingerprint, origin_path)) => {
+//                                let deriv_path = DerivationPath::from(
+//                                    &full_path.into_iter().cloned().collect::<Vec<ChildNumber>>()
+//                                        [origin_path.len()..],
+//                                );
+//                                self.xkey.derive_priv(&secp, &deriv_path).unwrap()
+//                            }
+//                            None => self.xkey.derive_priv(&secp, &full_path).unwrap(),
+//                        };
+//
+//                        if &derived_key.private_key.public_key(&secp) != pk {
+//                            Err(SignerError::InvalidKey)
+//                        } else {
+//                            derived_key.private_key.sign(psbt, Some(i), secp)
+//                        }
+//                    } else {
+//                        Err(SignerError::InvalidHDKeypath)
+//                    }
+//                } else {
+//                    Err(SignerError::MissingHDKeypath)
+//                }
+//            } else {
+//                Err(SignerError::InputIndexOutOfRange)
+//            }
+//        } else {
+//            for i in 0..psbt.inputs.len() {
+//                self.sign(psbt, Some(i), &secp)?;
+//            }
+//            Ok(())
+//        }
 
     fn id(&self, secp: &SecpCtx) -> SignerId {
         SignerId::from(self.root_fingerprint(&secp))
