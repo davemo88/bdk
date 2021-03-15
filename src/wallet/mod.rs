@@ -755,7 +755,7 @@ where
     /// # let recipient_address = Address::from_str("2N4eQYCbKUHCCTUjBJeHcJp9ok6J2GZsTDt").unwrap();
     /// let (psbt, _) = {
     ///     let mut builder = wallet.build_tx();
-    ///     builder.add_recipient(recipient_address.script_pubkey(), 70_000);
+    ///     builder.add_recipient(recipient_address.script_pubkey(), 50_000);
     ///     builder.finish()?
     /// };
     /// let (signed_psbt, finalized) = wallet.sign(psbt, None)?;
