@@ -751,12 +751,11 @@ where
     /// # use bitcoin::*;
     /// # use bdk::*;
     /// # use bdk::database::*;
-    /// # let descriptor = "wpkh(tpubD6NzVbkrYhZ4Xferm7Pz4VnjdcDPFyjVu5K4iZXQ4pVN8Cks4pHVowTBXBKRhX64pkRyJZJN5xAKj4UDNnLPb5p2sSKXhewoYx5GbTdUFWq/*)";
     /// # let wallet = doctest_wallet!();
-    /// # let to_address = Address::from_str("2N4eQYCbKUHCCTUjBJeHcJp9ok6J2GZsTDt").unwrap();
+    /// # let recipient_address = Address::from_str("2N4eQYCbKUHCCTUjBJeHcJp9ok6J2GZsTDt").unwrap();
     /// let (psbt, _) = {
     ///     let mut builder = wallet.build_tx();
-    ///     builder.add_recipient(to_address.script_pubkey(), 50_000);
+    ///     builder.add_recipient(recipient_address.script_pubkey(), 70_000);
     ///     builder.finish()?
     /// };
     /// let (signed_psbt, finalized) = wallet.sign(psbt, None)?;
@@ -766,12 +765,14 @@ where
         // this helps us doing our job later
         self.add_input_hd_keypaths(&mut psbt)?;
 
-        for signer in self
-            .signers
-            .signers()
-            .iter()
-            .chain(self.change_signers.signers().iter())
-        {
+        let all_signers = {
+            let mut signers = self.signers.signers();
+            signers.append(&mut self.change_signers.signers());
+            signers.sort_by_key(|signer| signer.id(&self.secp));
+            signers.dedup_by_key(|signer| signer.id(&self.secp));
+            signers
+        };
+        for signer in all_signers {
             for i in 0..psbt.inputs.len() {
                 signer.sign(&mut psbt, i, &self.secp)?;
             }
