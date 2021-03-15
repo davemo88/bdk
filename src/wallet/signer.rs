@@ -236,46 +236,6 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
             Err(SignerError::InvalidKey)
         }
     }
-//        if let Some(i) = input_index {
-//            if let Some(input) = psbt.inputs.get(i) {
-//                if let Some((pk, &(fingerprint, ref full_path))) =
-//                    input.bip32_derivation.iter().next()
-//                {
-//                    if self
-//                        .matches(&(fingerprint, full_path.clone()), &secp)
-//                        .is_some()
-//                    {
-//                        let derived_key = match self.origin.clone() {
-//                            Some((_fingerprint, origin_path)) => {
-//                                let deriv_path = DerivationPath::from(
-//                                    &full_path.into_iter().cloned().collect::<Vec<ChildNumber>>()
-//                                        [origin_path.len()..],
-//                                );
-//                                self.xkey.derive_priv(&secp, &deriv_path).unwrap()
-//                            }
-//                            None => self.xkey.derive_priv(&secp, &full_path).unwrap(),
-//                        };
-//
-//                        if &derived_key.private_key.public_key(&secp) != pk {
-//                            Err(SignerError::InvalidKey)
-//                        } else {
-//                            derived_key.private_key.sign(psbt, Some(i), secp)
-//                        }
-//                    } else {
-//                        Err(SignerError::InvalidHDKeypath)
-//                    }
-//                } else {
-//                    Err(SignerError::MissingHDKeypath)
-//                }
-//            } else {
-//                Err(SignerError::InputIndexOutOfRange)
-//            }
-//        } else {
-//            for i in 0..psbt.inputs.len() {
-//                self.sign(psbt, Some(i), &secp)?;
-//            }
-//            Ok(())
-//        }
 
     fn id(&self, secp: &SecpCtx) -> SignerId {
         SignerId::from(self.root_fingerprint(&secp))
