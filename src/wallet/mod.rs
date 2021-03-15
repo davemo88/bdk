@@ -772,7 +772,9 @@ where
             .iter()
             .chain(self.change_signers.signers().iter())
         {
-            signer.sign(&mut psbt, None, &self.secp)?;
+            for i in 0..psbt.inputs.len() {
+                signer.sign(&mut psbt, i, &self.secp)?;
+            }
         }
 
         // attempt to finalize

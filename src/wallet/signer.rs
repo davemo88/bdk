@@ -51,10 +51,9 @@
 //!     fn sign(
 //!         &self,
 //!         psbt: &mut psbt::PartiallySignedTransaction,
-//!         input_index: Option<usize>,
+//!         input_index: usize,
 //!         _secp: &Secp256k1<All>,
 //!     ) -> Result<(), SignerError> {
-//!         let input_index = input_index.ok_or(SignerError::InputIndexOutOfRange)?;
 //!         self.device.sign_input(psbt, input_index)?;
 //!
 //!         Ok(())
@@ -160,15 +159,11 @@ impl std::error::Error for SignerError {}
 /// This trait can be implemented to provide customized signers to the wallet. For an example see
 /// [`this module`](crate::wallet::signer)'s documentation.
 pub trait Signer: fmt::Debug + Send + Sync {
-    /// Sign a PSBT
-    ///
-    /// The `input_index` argument is only provided if the wallet doesn't declare to sign the whole
-    /// transaction in one go. Otherwise its value is `None` and
-    /// can be ignored.
+    /// Add a signature to a PSBT for an input
     fn sign(
         &self,
         psbt: &mut psbt::PartiallySignedTransaction,
-        input_index: Option<usize>,
+        input_index: usize,
         secp: &SecpCtx,
     ) -> Result<(), SignerError>;
 
@@ -192,19 +187,10 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
     fn sign(
         &self,
         psbt: &mut psbt::PartiallySignedTransaction,
-        input_index: Option<usize>,
+        input_index: usize,
         secp: &SecpCtx,
     ) -> Result<(), SignerError> {
-        let i = match input_index {
-            Some(i) => i,
-            None => {
-                for i in 0..psbt.inputs.len() {
-                    self.sign(psbt, Some(i), &secp)?;
-                }
-                return Ok(())
-            }
-        };
-        let input = match psbt.inputs.get(i) {
+        let input = match psbt.inputs.get(input_index) {
             Some(input) => input,
             None => return Err(SignerError::InputIndexOutOfRange),
         };
@@ -231,7 +217,7 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
         };
 
         if &derived_key.private_key.public_key(&secp) == pk {
-            derived_key.private_key.sign(psbt, Some(i), secp)
+            derived_key.private_key.sign(psbt, input_index, secp)
         } else {
             Err(SignerError::InvalidKey)
         }
@@ -250,44 +236,37 @@ impl Signer for PrivateKey {
     fn sign(
         &self,
         psbt: &mut psbt::PartiallySignedTransaction,
-        input_index: Option<usize>,
+        input_index: usize ,
         secp: &SecpCtx,
     ) -> Result<(), SignerError> {
-        if let Some(i) = input_index {
-            if let Some(input) = psbt.inputs.get(i) {
-                let pubkey = self.public_key(&secp);
-                if input.partial_sigs.contains_key(&pubkey) {
-                    return Ok(());
-                }
-                // FIXME: use the presence of `witness_utxo` as an indication that we should make a bip143
-                // sig. Does this make sense? Should we add an extra argument to explicitly swith between
-                // these? The original idea was to declare sign() as sign<Ctx: ScriptContex>() and use Ctx,
-                // but that violates the rules for trait-objects, so we can't do it.
-                let (hash, sighash) = match input.witness_utxo {
-                    Some(_) => Segwitv0::sighash(&psbt.clone(), i)?,
-                    None => Legacy::sighash(&psbt.clone(), i)?,
-                };
-
-                let signature = secp.sign(
-                    &Message::from_slice(&hash.into_inner()[..]).unwrap(),
-                    &self.key,
-                );
-
-                let mut final_signature = Vec::with_capacity(75);
-                final_signature.extend_from_slice(&signature.serialize_der());
-                final_signature.push(sighash.as_u32() as u8);
-
-                psbt.inputs[i].partial_sigs.insert(pubkey, final_signature);
-
-                Ok(())
-            } else {
-                Err(SignerError::InputIndexOutOfRange)
+        if let Some(input) = psbt.inputs.get(input_index) {
+            let pubkey = self.public_key(&secp);
+            if input.partial_sigs.contains_key(&pubkey) {
+                return Ok(());
             }
-        } else {
-            for i in 0..psbt.inputs.len() {
-                self.sign(psbt, Some(i), &secp)?;
-            }
+            // FIXME: use the presence of `witness_utxo` as an indication that we should make a bip143
+            // sig. Does this make sense? Should we add an extra argument to explicitly swith between
+            // these? The original idea was to declare sign() as sign<Ctx: ScriptContex>() and use Ctx,
+            // but that violates the rules for trait-objects, so we can't do it.
+            let (hash, sighash) = match input.witness_utxo {
+                Some(_) => Segwitv0::sighash(&psbt.clone(), input_index)?,
+                None => Legacy::sighash(&psbt.clone(), input_index)?,
+            };
+
+            let signature = secp.sign(
+                &Message::from_slice(&hash.into_inner()[..]).unwrap(),
+                &self.key,
+            );
+
+            let mut final_signature = Vec::with_capacity(75);
+            final_signature.extend_from_slice(&signature.serialize_der());
+            final_signature.push(sighash.as_u32() as u8);
+
+            psbt.inputs[input_index].partial_sigs.insert(pubkey, final_signature);
+
             Ok(())
+        } else {
+            Err(SignerError::InputIndexOutOfRange)
         }
     }
 
@@ -643,7 +622,7 @@ mod signers_container_tests {
         fn sign(
             &self,
             _psbt: &mut PartiallySignedTransaction,
-            _input_index: Option<usize>,
+            _input_index: usize ,
             _secp: &SecpCtx,
         ) -> Result<(), SignerError> {
             Ok(())
