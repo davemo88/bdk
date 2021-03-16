@@ -192,10 +192,17 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
         input_index: usize,
         secp: &SecpCtx,
     ) -> Result<(), SignerError> {
-        let input = psbt.inputs.get(input_index).ok_or(SignerError::InputIndexOutOfRange)?;
-        let (public_key, (fingerprint, full_path)) = input.bip32_derivation.iter().next().ok_or(SignerError::MissingHDKeypath)?;
+        let input = psbt
+            .inputs
+            .get(input_index)
+            .ok_or(SignerError::InputIndexOutOfRange)?;
+        let (public_key, (fingerprint, full_path)) = input
+            .bip32_derivation
+            .iter()
+            .next()
+            .ok_or(SignerError::MissingHDKeypath)?;
         if self
-            .matches(&(fingerprint.clone(), full_path.clone()), &secp)
+            .matches(&(*fingerprint, full_path.clone()), &secp)
             .is_none()
         {
             return Err(SignerError::InvalidHDKeypath);
@@ -210,7 +217,7 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
             }
             None => self.xkey.derive_priv(&secp, &full_path).unwrap(),
         };
-        if derived_key.private_key.public_key(&secp) != public_key.clone() {
+        if derived_key.private_key.public_key(&secp) != *public_key {
             return Err(SignerError::InvalidKey);
         }
         derived_key.private_key.sign(psbt, input_index, secp)
@@ -232,7 +239,10 @@ impl Signer for PrivateKey {
         input_index: usize,
         secp: &SecpCtx,
     ) -> Result<(), SignerError> {
-        let input = psbt.inputs.get(input_index).ok_or(SignerError::InputIndexOutOfRange)?;
+        let input = psbt
+            .inputs
+            .get(input_index)
+            .ok_or(SignerError::InputIndexOutOfRange)?;
         let pubkey = self.public_key(&secp);
         if input.partial_sigs.contains_key(&pubkey) {
             return Err(SignerError::InputAlreadySigned);
