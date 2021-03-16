@@ -1321,14 +1321,11 @@ where
     ) -> Result<Input, Error> {
         // Try to find the prev_script in our db to figure out if this is internal or external,
         // and the derivation index
-        let (keychain, child) = match self
+        let (keychain, child) = self
             .database
             .borrow()
             .get_path_from_script_pubkey(&utxo.txout.script_pubkey)?
-        {
-            Some(x) => x,
-            None => return Err(Error::UnknownUTXO),
-        };
+            .ok_or(Error::UnknownUTXO)?;
 
         let mut psbt_input = Input {
             sighash_type,
@@ -3611,9 +3608,9 @@ mod test {
             "should finalized input it signed"
         )
     }
-    
+
     #[test]
-    fn test_sign_with_xprivkey_among_foreign_utxos () {
+    fn test_sign_with_xprivkey_among_foreign_utxos() {
         let (wallet1, _, _) = get_funded_wallet("wpkh(tprv8ZgxMBicQKsPd3EupYiPRhaMooHKUHJxNsTfYuScep13go8QFfHdtkG9nRkFGb7busX4isf6X9dURGCoKgitaApQ6MupRhZMcELAxTBRJgS/0/*)");
         let (wallet2, _, _) =
             get_funded_wallet("wpkh(tprv8fRjAmrJLVDT8LqJfP323GNeuvFG58eV8oZqq1Der7HHj7DdXzsJmHUo2f544Y8ZAV2euvmPhvYUJYZCfwWoWSsU5Y8deDkuVdaUx7YSQ4F/0/*)");
