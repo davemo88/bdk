@@ -1516,13 +1516,30 @@ mod test {
         )
         .unwrap();
 
-        let txid = crate::populate_test_db!(
-            wallet.database.borrow_mut(),
-            testutils! {
-                @tx ( (@external descriptors, 0) => 50_000 ) (@confirmations 1)
-            },
-            Some(100)
-        );
+        let funding_address_kix = 0;
+
+        let tx_meta = testutils! {
+                @tx ( (@external descriptors, funding_address_kix) => 50_000 ) (@confirmations 1)
+        };
+
+        wallet
+            .database
+            .borrow_mut()
+            .set_script_pubkey(
+                &bitcoin::Address::from_str(&tx_meta.output.iter().next().unwrap().to_address)
+                    .unwrap()
+                    .script_pubkey(),
+                KeychainKind::External,
+                funding_address_kix,
+            )
+            .unwrap();
+        wallet
+            .database
+            .borrow_mut()
+            .set_last_index(KeychainKind::External, funding_address_kix)
+            .unwrap();
+
+        let txid = crate::populate_test_db!(wallet.database.borrow_mut(), tx_meta, Some(100));
 
         (wallet, descriptors, txid)
     }
