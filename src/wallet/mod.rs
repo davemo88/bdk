@@ -855,7 +855,7 @@ where
 
         let all_signers = {
             let mut signers = self.signers.signers();
-            signers.append(&mut self.change_signers.signers());
+            signers.extend(self.change_signers.signers());
             signers.sort_by_key(|signer| signer.id(&self.secp));
             signers.dedup_by_key(|signer| signer.id(&self.secp));
             signers
