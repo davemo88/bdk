@@ -850,9 +850,6 @@ where
     /// assert!(finalized, "we should have signed all the inputs");
     /// # Ok::<(), bdk::Error>(())
     pub fn sign(&self, mut psbt: PSBT, assume_height: Option<u32>) -> Result<(PSBT, bool), Error> {
-        // this helps us doing our job later
-        self.add_input_hd_keypaths(&mut psbt)?;
-
         let all_signers = {
             let mut signers = self.signers.signers();
             signers.extend(self.change_signers.signers());
@@ -870,8 +867,6 @@ where
                 };
             }
         }
-
-        // attempt to finalize
         self.finalize_psbt(psbt, assume_height)
     }
 
@@ -1349,33 +1344,6 @@ where
             }
         }
         Ok(psbt_input)
-    }
-
-    fn add_input_hd_keypaths(&self, psbt: &mut PSBT) -> Result<(), Error> {
-        let input_utxos = (0..psbt.inputs.len())
-            .map(|i| psbt.get_utxo_for(i))
-            .collect::<Vec<Option<TxOut>>>();
-        // try to add hd_keypaths if we've already seen the output
-        for (psbt_input, out) in psbt.inputs.iter_mut().zip(input_utxos.iter()) {
-            if let Some(out) = out {
-                if let Some((keychain, child)) = self
-                    .database
-                    .borrow()
-                    .get_path_from_script_pubkey(&out.script_pubkey)?
-                {
-                    debug!("Found descriptor {:?}/{}", keychain, child);
-
-                    // merge hd_keypaths
-                    let desc = self.get_descriptor_for_keychain(keychain);
-                    let mut hd_keypaths = desc
-                        .as_derived(child, &self.secp)
-                        .get_hd_keypaths(&self.secp)?;
-                    psbt_input.bip32_derivation.append(&mut hd_keypaths);
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -3549,11 +3517,8 @@ mod test {
         psbt.inputs[0].bip32_derivation.clear();
         assert_eq!(psbt.inputs[0].bip32_derivation.len(), 0);
 
-        let (signed_psbt, finalized) = wallet.sign(psbt, None).unwrap();
-        assert_eq!(finalized, true);
-
-        let extracted = signed_psbt.extract_tx();
-        assert_eq!(extracted.input[0].witness.len(), 2);
+        let (_unsigned_psbt, finalized) = wallet.sign(psbt, None).unwrap();
+        assert_eq!(finalized, false);
     }
 
     #[test]
