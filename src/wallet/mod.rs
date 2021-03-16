@@ -45,7 +45,7 @@ pub use utils::IsDust;
 
 use address_validator::AddressValidator;
 use coin_selection::DefaultCoinSelectionAlgorithm;
-use signer::{Signer, SignerOrdering, SignersContainer};
+use signer::{Signer, SignerError, SignerOrdering, SignersContainer};
 use tx_builder::{BumpFee, CreateTx, FeePolicy, TxBuilder, TxParams};
 use utils::{check_nlocktime, check_nsequence_rbf, After, Older, SecpCtx, DUST_LIMIT_SATOSHI};
 
@@ -774,7 +774,12 @@ where
         };
         for signer in all_signers {
             for i in 0..psbt.inputs.len() {
-                signer.sign(&mut psbt, i, &self.secp)?;
+                match signer.sign(&mut psbt, i, &self.secp) {
+                    Ok(())
+                    | Err(SignerError::MissingHDKeypath)
+                    | Err(SignerError::InvalidHDKeypath) => continue,
+                    Err(e) => return Err(From::from(e)),
+                };
             }
         }
 
@@ -3448,5 +3453,57 @@ mod test {
             psbt.inputs[0].final_script_witness.is_some(),
             "should finalized input it signed"
         )
+    }
+    
+    #[test]
+    fn test_sign_with_xprivkey_among_foreign_utxos () {
+        let (wallet1, _, _) = get_funded_wallet("wpkh(tprv8ZgxMBicQKsPd3EupYiPRhaMooHKUHJxNsTfYuScep13go8QFfHdtkG9nRkFGb7busX4isf6X9dURGCoKgitaApQ6MupRhZMcELAxTBRJgS/0/*)");
+        let (wallet2, _, _) =
+            get_funded_wallet("wpkh(tprv8fRjAmrJLVDT8LqJfP323GNeuvFG58eV8oZqq1Der7HHj7DdXzsJmHUo2f544Y8ZAV2euvmPhvYUJYZCfwWoWSsU5Y8deDkuVdaUx7YSQ4F/0/*)");
+        let addr = Address::from_str("2N1Ffz3WaNzbeLFBb51xyFMHYSEUXcbiSoX").unwrap();
+        let utxo = wallet2.list_unspent().unwrap().remove(0);
+        let foreign_utxo_satisfaction = wallet2
+            .get_descriptor_for_keychain(KeychainKind::External)
+            .max_satisfaction_weight()
+            .unwrap();
+
+// need get_psbt_input for this. . .
+        let psbt_input = psbt::Input {
+            witness_utxo: Some(utxo.txout.clone()),
+            ..Default::default()
+        };
+
+        let mut builder = wallet1.build_tx();
+        builder
+            .add_recipient(addr.script_pubkey(), 60_000)
+            .add_foreign_utxo(utxo.outpoint, psbt_input, foreign_utxo_satisfaction)
+            .unwrap();
+        let (psbt, details) = builder.finish().unwrap();
+
+        assert_eq!(
+            details.sent - details.received,
+            10_000 + details.fees,
+            "we should have only net spent ~10_000"
+        );
+
+        assert!(
+            psbt.global
+                .unsigned_tx
+                .input
+                .iter()
+                .find(|input| input.previous_output == utxo.outpoint)
+                .is_some(),
+            "foreign_utxo should be in there"
+        );
+
+        let (psbt, finished) = wallet1.sign(psbt, None).unwrap();
+
+        assert!(
+            !finished,
+            "only one of the inputs should have been signed so far"
+        );
+
+        let (_, finished) = wallet2.sign(psbt, None).unwrap();
+        assert!(finished, "all the inputs should have been signed now");
     }
 }
