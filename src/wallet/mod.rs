@@ -3500,11 +3500,7 @@ mod test {
             .max_satisfaction_weight()
             .unwrap();
 
-// need get_psbt_input for this. . .
-        let psbt_input = psbt::Input {
-            witness_utxo: Some(utxo.txout.clone()),
-            ..Default::default()
-        };
+        let psbt_input = wallet2.get_psbt_input(utxo.clone(), None, false).unwrap();
 
         let mut builder = wallet1.build_tx();
         builder
