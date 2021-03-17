@@ -46,7 +46,7 @@ pub use utils::IsDust;
 
 use address_validator::AddressValidator;
 use coin_selection::DefaultCoinSelectionAlgorithm;
-use signer::{Signer, SignerError, SignerOrdering, SignersContainer};
+use signer::{Signer, WalletSigner, SignerError, SignerOrdering, SignersContainer};
 use tx_builder::{BumpFee, CreateTx, FeePolicy, TxBuilder, TxParams};
 use utils::{check_nlocktime, check_nsequence_rbf, After, Older, SecpCtx, DUST_LIMIT_SATOSHI};
 
@@ -313,7 +313,7 @@ where
         &mut self,
         keychain: KeychainKind,
         ordering: SignerOrdering,
-        signer: Arc<dyn Signer>,
+        signer: Arc<Signer>,
     ) {
         let signers = match keychain {
             KeychainKind::External => Arc::make_mut(&mut self.signers),
@@ -858,13 +858,26 @@ where
             signers
         };
         for signer in all_signers {
-            for i in 0..psbt.inputs.len() {
-                match signer.sign(&mut psbt, i, &self.secp) {
-                    Ok(())
-                    | Err(SignerError::MissingHDKeypath)
-                    | Err(SignerError::InvalidHDKeypath) => continue,
-                    Err(e) => return Err(From::from(e)),
-                };
+            match signer.as_ref() {
+                Signer::Input(s) => {
+                    for i in 0..psbt.inputs.len() {
+                        println!("{}", i);
+                        match s.sign(&mut psbt, i, &self.secp) {
+                            Ok(())
+                            | Err(SignerError::MissingHDKeypath)
+                            | Err(SignerError::InvalidHDKeypath) => continue,
+                            Err(e) => return Err(From::from(e)),
+                        }
+                    }
+                }
+                Signer::Transaction(s) => {
+                    match s.sign_tx(&mut psbt, &self.secp) {
+                        Ok(())
+                        | Err(SignerError::MissingHDKeypath)
+                        | Err(SignerError::InvalidHDKeypath) => continue,
+                        Err(e) => return Err(From::from(e)),
+                    }
+                }
             }
         }
         self.finalize_psbt(psbt, assume_height)

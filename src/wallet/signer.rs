@@ -47,7 +47,7 @@
 //!     }
 //! }
 //!
-//! impl Signer for CustomSigner {
+//! impl InputSigner for CustomSigner {
 //!     fn sign(
 //!         &self,
 //!         psbt: &mut psbt::PartiallySignedTransaction,
@@ -58,7 +58,9 @@
 //!
 //!         Ok(())
 //!     }
-//!
+//! }
+//! 
+//! impl WalletSigner for CustomSigner {
 //!     fn id(&self, _secp: &Secp256k1<All>) -> SignerId {
 //!         self.device.get_id()
 //!     }
@@ -71,7 +73,7 @@
 //! wallet.add_signer(
 //!     KeychainKind::External,
 //!     SignerOrdering(200),
-//!     Arc::new(custom_signer)
+//!     Arc::new(Signer::Input(Box::new(custom_signer)))
 //! );
 //!
 //! # Ok::<_, bdk::Error>(())
@@ -156,19 +158,33 @@ impl fmt::Display for SignerError {
 
 impl std::error::Error for SignerError {}
 
-/// Trait for signers
-///
-/// This trait can be implemented to provide customized signers to the wallet. For an example see
-/// [`this module`](crate::wallet::signer)'s documentation.
-pub trait Signer: fmt::Debug + Send + Sync {
-    /// Add a signature to a PSBT for an input
-    fn sign(
-        &self,
-        psbt: &mut psbt::PartiallySignedTransaction,
-        input_index: usize,
-        secp: &SecpCtx,
-    ) -> Result<(), SignerError>;
+#[derive(Debug)]
+/// Accomodate Signers that can only sign entire tx's
+pub enum Signer {
+/// Signer that can sign a specfic input
+    Input(Box<dyn InputSigner>),
+/// Signer that can only sign an entire tx
+    Transaction(Box<dyn TransactionSigner>),
+}
 
+impl WalletSigner for Signer {
+    fn id(&self, secp: &SecpCtx) -> SignerId {
+        match self {
+            Signer::Input(s) => s.id(&secp),
+            Signer::Transaction(s) => s.id(&secp),
+        }
+    }
+
+    fn descriptor_secret_key(&self) -> Option<DescriptorSecretKey> {
+        match self {
+            Signer::Input(s) => s.descriptor_secret_key(),
+            Signer::Transaction(s) => s.descriptor_secret_key(),
+        }
+    }
+}
+
+/// Common funcs for signers
+pub trait WalletSigner {
     /// Return the [`SignerId`] for this signer
     ///
     /// The [`SignerId`] can be used to lookup a signer in the [`Wallet`](crate::Wallet)'s signers map or to
@@ -185,7 +201,45 @@ pub trait Signer: fmt::Debug + Send + Sync {
     }
 }
 
-impl Signer for DescriptorXKey<ExtendedPrivKey> {
+/// Trait for Input signers
+///
+/// This trait can be implemented to provide customized signers to the wallet. For an example see
+/// [`this module`](crate::wallet::signer)'s documentation.
+pub trait InputSigner: WalletSigner + fmt::Debug + Send + Sync {
+    /// Add a signature to a PSBT for an input
+    fn sign(
+        &self,
+        psbt: &mut psbt::PartiallySignedTransaction,
+        input_index: usize,
+        secp: &SecpCtx,
+    ) -> Result<(), SignerError>;
+}
+
+/// Trait for signers that can only sign entire tx's
+pub trait TransactionSigner: WalletSigner + fmt::Debug + Send + Sync {
+/// sign an entire tx
+    fn sign_tx(
+        &self,
+        psbt: &mut psbt::PartiallySignedTransaction,
+        secp: &SecpCtx,
+    ) -> Result<(), SignerError>;
+}
+
+impl<T> TransactionSigner for T 
+where T: InputSigner {
+    fn sign_tx(
+        &self,
+        psbt: &mut psbt::PartiallySignedTransaction,
+        secp: &SecpCtx,
+    ) -> Result<(), SignerError> {
+        for i in 0..psbt.inputs.len() {
+            InputSigner::sign(self, psbt, i, &secp)?;
+        }
+        Ok(())
+    }
+}
+
+impl InputSigner for DescriptorXKey<ExtendedPrivKey> {
     fn sign(
         &self,
         psbt: &mut psbt::PartiallySignedTransaction,
@@ -222,6 +276,9 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
         }
         derived_key.private_key.sign(psbt, input_index, secp)
     }
+}
+
+impl WalletSigner for DescriptorXKey<ExtendedPrivKey> {
 
     fn id(&self, secp: &SecpCtx) -> SignerId {
         SignerId::from(self.root_fingerprint(&secp))
@@ -232,7 +289,7 @@ impl Signer for DescriptorXKey<ExtendedPrivKey> {
     }
 }
 
-impl Signer for PrivateKey {
+impl InputSigner for PrivateKey {
     fn sign(
         &self,
         psbt: &mut psbt::PartiallySignedTransaction,
@@ -271,6 +328,9 @@ impl Signer for PrivateKey {
 
         Ok(())
     }
+}
+
+impl WalletSigner for PrivateKey {
 
     fn id(&self, secp: &SecpCtx) -> SignerId {
         SignerId::from(self.public_key(secp).to_pubkeyhash())
@@ -315,7 +375,7 @@ impl From<(SignerId, SignerOrdering)> for SignersContainerKey {
 
 /// Container for multiple signers
 #[derive(Debug, Default, Clone)]
-pub struct SignersContainer(BTreeMap<SignersContainerKey, Arc<dyn Signer>>);
+pub struct SignersContainer(BTreeMap<SignersContainerKey, Arc<Signer>>);
 
 impl SignersContainer {
     /// Create a map of public keys to secret keys
@@ -338,12 +398,12 @@ impl From<KeyMap> for SignersContainer {
                 DescriptorSecretKey::SinglePriv(private_key) => container.add_external(
                     SignerId::from(private_key.key.public_key(&secp).to_pubkeyhash()),
                     SignerOrdering::default(),
-                    Arc::new(private_key.key),
+                    Arc::new(Signer::Input(Box::new(private_key.key))),
                 ),
                 DescriptorSecretKey::XPrv(xprv) => container.add_external(
                     SignerId::from(xprv.root_fingerprint(&secp)),
                     SignerOrdering::default(),
-                    Arc::new(xprv),
+                    Arc::new(Signer::Input(Box::new(xprv))),
                 ),
             };
         }
@@ -364,13 +424,13 @@ impl SignersContainer {
         &mut self,
         id: SignerId,
         ordering: SignerOrdering,
-        signer: Arc<dyn Signer>,
-    ) -> Option<Arc<dyn Signer>> {
+        signer: Arc<Signer>,
+    ) -> Option<Arc<Signer>> {
         self.0.insert((id, ordering).into(), signer)
     }
 
     /// Removes a signer from the container and returns it
-    pub fn remove(&mut self, id: SignerId, ordering: SignerOrdering) -> Option<Arc<dyn Signer>> {
+    pub fn remove(&mut self, id: SignerId, ordering: SignerOrdering) -> Option<Arc<Signer>> {
         self.0.remove(&(id, ordering).into())
     }
 
@@ -383,12 +443,12 @@ impl SignersContainer {
     }
 
     /// Returns the list of signers in the container, sorted by lowest to highest `ordering`
-    pub fn signers(&self) -> Vec<&Arc<dyn Signer>> {
+    pub fn signers(&self) -> Vec<&Arc<Signer>> {
         self.0.values().collect()
     }
 
     /// Finds the signer with lowest ordering for a given id in the container.
-    pub fn find(&self, id: SignerId) -> Option<&Arc<dyn Signer>> {
+    pub fn find(&self, id: SignerId) -> Option<&Arc<Signer>> {
         self.0
             .range((
                 Included(&(id.clone(), SignerOrdering(0)).into()),
@@ -539,7 +599,7 @@ mod signers_container_tests {
     use miniscript::ScriptContext;
     use std::str::FromStr;
 
-    fn is_equal(this: &Arc<dyn Signer>, that: &Arc<DummySigner>) -> bool {
+    fn is_equal(this: &Arc<Signer>, that: &Arc<Signer>) -> bool {
         let secp = Secp256k1::new();
         this.id(&secp) == that.id(&secp)
     }
@@ -568,9 +628,9 @@ mod signers_container_tests {
     #[test]
     fn signers_sorted_by_ordering() {
         let mut signers = SignersContainer::new();
-        let signer1 = Arc::new(DummySigner { number: 1 });
-        let signer2 = Arc::new(DummySigner { number: 2 });
-        let signer3 = Arc::new(DummySigner { number: 3 });
+        let signer1 = Arc::new(Signer::Input(Box::new(DummySigner { number: 1 })));
+        let signer2 = Arc::new(Signer::Input(Box::new(DummySigner { number: 2 })));
+        let signer3 = Arc::new(Signer::Input(Box::new(DummySigner { number: 3 })));
 
         // Mixed order insertions verifies we are not inserting at head or tail.
         signers.add_external(SignerId::Dummy(2), SignerOrdering(2), signer2.clone());
@@ -588,10 +648,10 @@ mod signers_container_tests {
     #[test]
     fn find_signer_by_id() {
         let mut signers = SignersContainer::new();
-        let signer1 = Arc::new(DummySigner { number: 1 });
-        let signer2 = Arc::new(DummySigner { number: 2 });
-        let signer3 = Arc::new(DummySigner { number: 3 });
-        let signer4 = Arc::new(DummySigner { number: 3 }); // Same ID as `signer3` but will use lower ordering.
+        let signer1 = Arc::new(Signer::Input(Box::new(DummySigner { number: 1 })));
+        let signer2 = Arc::new(Signer::Input(Box::new(DummySigner { number: 2 })));
+        let signer3 = Arc::new(Signer::Input(Box::new(DummySigner { number: 3 })));
+        let signer4 = Arc::new(Signer::Input(Box::new(DummySigner { number: 3 }))); // Same ID as `signer3` but will use lower ordering.
 
         let id1 = SignerId::Dummy(1);
         let id2 = SignerId::Dummy(2);
@@ -620,7 +680,7 @@ mod signers_container_tests {
         number: u64,
     }
 
-    impl Signer for DummySigner {
+    impl InputSigner for DummySigner {
         fn sign(
             &self,
             _psbt: &mut PartiallySignedTransaction,
@@ -629,7 +689,9 @@ mod signers_container_tests {
         ) -> Result<(), SignerError> {
             Ok(())
         }
+    }
 
+    impl WalletSigner for DummySigner {
         fn id(&self, _secp: &SecpCtx) -> SignerId {
             SignerId::Dummy(self.number)
         }
