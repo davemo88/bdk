@@ -869,14 +869,12 @@ where
                         }
                     }
                 }
-                Signer::Transaction(s) => {
-                    match s.sign_tx(&mut psbt, &self.secp) {
-                        Ok(())
-                        | Err(SignerError::MissingHDKeypath)
-                        | Err(SignerError::InvalidHDKeypath) => continue,
-                        Err(e) => return Err(From::from(e)),
-                    }
-                }
+                Signer::Transaction(s) => match s.sign_tx(&mut psbt, &self.secp) {
+                    Ok(())
+                    | Err(SignerError::MissingHDKeypath)
+                    | Err(SignerError::InvalidHDKeypath) => continue,
+                    Err(e) => return Err(From::from(e)),
+                },
             }
         }
         self.finalize_psbt(psbt, assume_height)

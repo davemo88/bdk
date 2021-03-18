@@ -161,9 +161,9 @@ impl std::error::Error for SignerError {}
 #[derive(Debug)]
 /// Accomodate Signers that can only sign entire tx's
 pub enum Signer {
-/// Signer that can sign a specfic input
+    /// Signer that can sign a specfic input
     Input(Box<dyn InputSigner>),
-/// Signer that can only sign an entire tx
+    /// Signer that can only sign an entire tx
     Transaction(Box<dyn TransactionSigner>),
 }
 
