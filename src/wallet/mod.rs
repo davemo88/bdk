@@ -199,8 +199,8 @@ impl<B, D> Wallet<B, D>
 where
     D: BatchDatabase,
 {
-    // Return a newly derived address using the external descriptor
-    fn get_new_address(&self) -> Result<Address, Error> {
+    /// Return a newly derived address using the external descriptor
+    pub fn get_new_address(&self) -> Result<Address, Error> {
         let incremented_index = self.fetch_and_increment_index(KeychainKind::External)?;
 
         self.descriptor
