@@ -850,20 +850,21 @@ where
     /// assert!(finalized, "we should have signed all the inputs");
     /// # Ok::<(), bdk::Error>(())
     pub fn sign(&self, mut psbt: PSBT, assume_height: Option<u32>) -> Result<(PSBT, bool), Error> {
-        let all_signers = {
-            let mut signers = self.signers.signers();
-            signers.extend(self.change_signers.signers());
-            signers.sort_by_key(|signer| signer.id(&self.secp));
-            signers.dedup_by_key(|signer| signer.id(&self.secp));
-            signers
-        };
-        for signer in all_signers {
+        for signer in self.all_signers() {
             match signer.as_ref() {
                 Signer::Input(s) => s.sign_mine(&mut psbt, &self.secp)?,
                 Signer::Transaction(s) => s.sign_tx(&mut psbt, &self.secp)?,
             }
         }
         self.finalize_psbt(psbt, assume_height)
+    }
+
+    fn all_signers(&self) -> Vec<&Arc<Signer>> {
+        let mut signers = self.signers.signers();
+        signers.extend(self.change_signers.signers());
+        signers.sort_by_key(|signer| signer.id(&self.secp));
+        signers.dedup_by_key(|signer| signer.id(&self.secp));
+        signers
     }
 
     /// Return the spending policies for the wallet's descriptor

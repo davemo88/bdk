@@ -225,7 +225,7 @@ pub trait InputSigner: SignerDetails + fmt::Debug + Send + Sync {
                 Ok(())
                 | Err(SignerError::MissingHDKeypath)
                 | Err(SignerError::InvalidHDKeypath) => continue,
-                Err(e) => return Err(From::from(e)),
+                Err(e) => return Err(e),
             }
         }
         Ok(())
