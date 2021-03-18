@@ -876,18 +876,7 @@ where
                         | Err(SignerError::InvalidHDKeypath) => continue,
                         Err(e) => return Err(From::from(e)),
                     }
-=======
-                            Err(e) => return Err(e.into()),
-                        }
-                    }
->>>>>>> two-signer-traits
                 }
-                Signer::Transaction(s) => match s.sign_tx(&mut psbt, &self.secp) {
-                    Ok(())
-                    | Err(SignerError::MissingHDKeypath)
-                    | Err(SignerError::InvalidHDKeypath) => continue,
-                    Err(e) => return Err(e.into()),
-                },
             }
         }
         self.finalize_psbt(psbt, assume_height)
