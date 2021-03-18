@@ -213,6 +213,23 @@ pub trait InputSigner: SignerDetails + fmt::Debug + Send + Sync {
         input_index: usize,
         secp: &SecpCtx,
     ) -> Result<(), SignerError>;
+
+    /// Add a signature to a PSBT for an input
+    fn sign_mine(
+        &self,
+        psbt: &mut psbt::PartiallySignedTransaction,
+        secp: &SecpCtx,
+    ) -> Result<(), SignerError> {
+        for i in 0..psbt.inputs.len() {
+            match self.sign(psbt, i, secp) {
+                Ok(())
+                | Err(SignerError::MissingHDKeypath)
+                | Err(SignerError::InvalidHDKeypath) => continue,
+                Err(e) => return Err(From::from(e)),
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Trait for signers that can only sign entire tx's
@@ -234,10 +251,7 @@ where
         psbt: &mut psbt::PartiallySignedTransaction,
         secp: &SecpCtx,
     ) -> Result<(), SignerError> {
-        for i in 0..psbt.inputs.len() {
-            InputSigner::sign(self, psbt, i, &secp)?;
-        }
-        Ok(())
+        self.sign_mine(psbt, secp)
     }
 }
 

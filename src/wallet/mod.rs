@@ -46,7 +46,7 @@ pub use utils::IsDust;
 
 use address_validator::AddressValidator;
 use coin_selection::DefaultCoinSelectionAlgorithm;
-use signer::{Signer, SignerDetails, SignerError, SignerOrdering, SignersContainer};
+use signer::{Signer, SignerDetails, SignerOrdering, SignersContainer};
 use tx_builder::{BumpFee, CreateTx, FeePolicy, TxBuilder, TxParams};
 use utils::{check_nlocktime, check_nsequence_rbf, After, Older, SecpCtx, DUST_LIMIT_SATOSHI};
 
@@ -859,22 +859,8 @@ where
         };
         for signer in all_signers {
             match signer.as_ref() {
-                Signer::Input(s) => {
-                    for i in 0..psbt.inputs.len() {
-                        match s.sign(&mut psbt, i, &self.secp) {
-                            Ok(())
-                            | Err(SignerError::MissingHDKeypath)
-                            | Err(SignerError::InvalidHDKeypath) => continue,
-                            Err(e) => return Err(From::from(e)),
-                        }
-                    }
-                }
-                Signer::Transaction(s) => match s.sign_tx(&mut psbt, &self.secp) {
-                    Ok(())
-                    | Err(SignerError::MissingHDKeypath)
-                    | Err(SignerError::InvalidHDKeypath) => continue,
-                    Err(e) => return Err(From::from(e)),
-                },
+                Signer::Input(s) => s.sign_mine(&mut psbt, &self.secp)?,
+                Signer::Transaction(s) => s.sign_tx(&mut psbt, &self.secp)?,
             }
         }
         self.finalize_psbt(psbt, assume_height)
