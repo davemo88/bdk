@@ -59,8 +59,8 @@
 //!         Ok(())
 //!     }
 //! }
-//! 
-//! impl WalletSigner for CustomSigner {
+//!
+//! impl SignerDetails for CustomSigner {
 //!     fn id(&self, _secp: &Secp256k1<All>) -> SignerId {
 //!         self.device.get_id()
 //!     }
@@ -167,7 +167,7 @@ pub enum Signer {
     Transaction(Box<dyn TransactionSigner>),
 }
 
-impl WalletSigner for Signer {
+impl SignerDetails for Signer {
     fn id(&self, secp: &SecpCtx) -> SignerId {
         match self {
             Signer::Input(s) => s.id(&secp),
@@ -184,7 +184,7 @@ impl WalletSigner for Signer {
 }
 
 /// Common funcs for signers
-pub trait WalletSigner {
+pub trait SignerDetails {
     /// Return the [`SignerId`] for this signer
     ///
     /// The [`SignerId`] can be used to lookup a signer in the [`Wallet`](crate::Wallet)'s signers map or to
@@ -201,11 +201,11 @@ pub trait WalletSigner {
     }
 }
 
-/// Trait for Input signers
+/// Signers which can sign a specific input.
 ///
-/// This trait can be implemented to provide customized signers to the wallet. For an example see
+/// This trait and TransactionSigner can be implemented to provide customized signers to the wallet. For an example see
 /// [`this module`](crate::wallet::signer)'s documentation.
-pub trait InputSigner: WalletSigner + fmt::Debug + Send + Sync {
+pub trait InputSigner: SignerDetails + fmt::Debug + Send + Sync {
     /// Add a signature to a PSBT for an input
     fn sign(
         &self,
@@ -216,8 +216,8 @@ pub trait InputSigner: WalletSigner + fmt::Debug + Send + Sync {
 }
 
 /// Trait for signers that can only sign entire tx's
-pub trait TransactionSigner: WalletSigner + fmt::Debug + Send + Sync {
-/// sign an entire tx
+pub trait TransactionSigner: SignerDetails + fmt::Debug + Send + Sync {
+    /// sign an entire tx
     fn sign_tx(
         &self,
         psbt: &mut psbt::PartiallySignedTransaction,
@@ -225,8 +225,10 @@ pub trait TransactionSigner: WalletSigner + fmt::Debug + Send + Sync {
     ) -> Result<(), SignerError>;
 }
 
-impl<T> TransactionSigner for T 
-where T: InputSigner {
+impl<T> TransactionSigner for T
+where
+    T: InputSigner,
+{
     fn sign_tx(
         &self,
         psbt: &mut psbt::PartiallySignedTransaction,
@@ -278,8 +280,7 @@ impl InputSigner for DescriptorXKey<ExtendedPrivKey> {
     }
 }
 
-impl WalletSigner for DescriptorXKey<ExtendedPrivKey> {
-
+impl SignerDetails for DescriptorXKey<ExtendedPrivKey> {
     fn id(&self, secp: &SecpCtx) -> SignerId {
         SignerId::from(self.root_fingerprint(&secp))
     }
@@ -309,8 +310,8 @@ impl InputSigner for PrivateKey {
         // these? The original idea was to declare sign() as sign<Ctx: ScriptContex>() and use Ctx,
         // but that violates the rules for trait-objects, so we can't do it.
         let (hash, sighash) = match input.witness_utxo {
-            Some(_) => Segwitv0::sighash(&psbt.clone(), input_index)?,
-            None => Legacy::sighash(&psbt.clone(), input_index)?,
+            Some(_) => Segwitv0::sighash(psbt, input_index)?,
+            None => Legacy::sighash(psbt, input_index)?,
         };
 
         let signature = secp.sign(
@@ -330,8 +331,7 @@ impl InputSigner for PrivateKey {
     }
 }
 
-impl WalletSigner for PrivateKey {
-
+impl SignerDetails for PrivateKey {
     fn id(&self, secp: &SecpCtx) -> SignerId {
         SignerId::from(self.public_key(secp).to_pubkeyhash())
     }
@@ -691,7 +691,7 @@ mod signers_container_tests {
         }
     }
 
-    impl WalletSigner for DummySigner {
+    impl SignerDetails for DummySigner {
         fn id(&self, _secp: &SecpCtx) -> SignerId {
             SignerId::Dummy(self.number)
         }
